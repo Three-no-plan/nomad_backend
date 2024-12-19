@@ -1,0 +1,9 @@
+type Result = variant { Ok : WalletInfo; Err : text };
+type Result_1 = variant { Ok; Err : text };
+type WalletInfo = record { id : nat64; taproot_address : text };
+service : () -> {
+  create_wallet : () -> (Result);
+  get_wallet_address : (nat64) -> (Result) query;
+  list_wallet : () -> (vec nat64) query;
+  upgrade_wallet_data : (nat64, opt text) -> (Result_1);
+}

@@ -1,0 +1,21 @@
+{
+  "canisters": {
+    "nomad_backend_backend": {
+      "candid": "src/nomad_backend_backend/nomad_backend_backend.did",
+      "package": "nomad_backend_backend",
+      "type": "rust"
+    },
+    "random_num": {
+      "main": "src/random_backend/main.mo",
+      "type": "motoko"
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}

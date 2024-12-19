@@ -1,0 +1,1 @@
+candid-extractor target/wasm32-unknown-unknown/release/nomad_backend_backend.wasm
