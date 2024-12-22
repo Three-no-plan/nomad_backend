@@ -7,9 +7,9 @@ use bitcoin::{Network, Address, PublicKey, PrivateKey, XOnlyPublicKey};
 use bitcoin::bip32::{ExtendedPrivKey, DerivationPath};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
-// decode_tx
-// mod tx; 
-// use tx::decode::{Transaction, parse_tx_from_hash};
+use sha2::{Sha256, Digest};
+use hex;
+use bs58;
 
 #[derive(candid::CandidType, candid::Deserialize, Clone)]
 struct contractInfo {
@@ -25,12 +25,51 @@ struct contractDetails {
     wif: String,
     contract_address: String,
 }
-// #[derive(Clone)]  
-// struct ParseResult {
-//     success: bool,
-//     transaction: Option<Transaction>,
-//     error: Option<String>
-// }
+
+#[derive(CandidType, Deserialize, Debug)]
+pub enum TxError {
+    DecodeError(String),
+    InvalidFormat(String),
+    InvalidLength(String),
+}
+
+// 定义代币类型
+#[derive(CandidType, Clone, Debug,Deserialize, PartialEq)]
+pub enum TokenType {
+    BRC20,
+    RUNES,
+}
+
+#[derive(CandidType, Clone, Debug)]
+pub struct deployRecord {
+    pub token_name: String,
+    pub token_type: TokenType,
+    pub deploy_hash: String,
+    pub timestamp: u64,
+}
+
+
+#[derive(CandidType, Deserialize, Debug)]
+pub struct Transaction {
+    inputs: Vec<Input>,
+    outputs: Vec<Output>,
+    lock_time: u32,
+}
+
+#[derive(CandidType, Deserialize, Debug)]
+pub struct Input {
+    txid: String,
+    vout: u32,
+    script: String,
+    sequence: u32,
+}
+
+#[derive(CandidType, Deserialize, Debug)]
+pub struct Output {
+    value: u64,
+    script: String,
+    address: Option<String>,
+}
 
 
 thread_local! {
@@ -59,6 +98,134 @@ fn generate_contract_id() -> usize {
         *current_counter
     })
 }
+
+
+
+fn parse_varint(data: &[u8], offset: &mut usize) -> (usize, String) {
+    let first_byte = data[*offset];
+    let original_offset = *offset;
+    *offset += 1;
+
+    let (value, len) = match first_byte {
+        0..=0xfc => (first_byte as usize, 1),
+        0xfd => {
+            let value = u16::from_le_bytes([data[*offset], data[*offset + 1]]) as usize;
+            *offset += 2;
+            (value, 3)
+        }
+        0xfe => {
+            let value = u32::from_le_bytes([data[*offset], data[*offset + 1], data[*offset + 2], data[*offset + 3]]) as usize;
+            *offset += 4;
+            (value, 5)
+        }
+        _ => {
+            let value = u64::from_le_bytes([data[*offset], data[*offset + 1], data[*offset + 2], data[*offset + 3], data[*offset + 4], data[*offset + 5], data[*offset + 6], data[*offset + 7]]) as usize;
+            *offset += 8;
+            (value, 9)
+        }
+    };
+
+    let raw = hex::encode(&data[original_offset..original_offset + len]);
+    (value, raw)
+}
+
+fn script_to_address(script: &[u8]) -> Option<String> {
+    if script.is_empty() {
+        return None;
+    }
+
+    if script.len() == 25 && script[0] == 0x76 && script[1] == 0xa9 && script[2] == 0x14 && script[23] == 0x88 && script[24] == 0xac {
+        return Some(hash160_to_address(&script[3..23], 0x00));
+    }
+
+    if script.len() == 23 && script[0] == 0xa9 && script[1] == 0x14 && script[22] == 0x87 {
+        return Some(hash160_to_address(&script[2..22], 0x05));
+    }
+
+    None
+}
+
+fn hash160_to_address(hash: &[u8], version: u8) -> String {
+    let mut address = vec![version];
+    address.extend_from_slice(hash);
+
+    let mut hasher = Sha256::new();
+    hasher.update(&address);
+    let temp = hasher.finalize();
+
+    let mut hasher = Sha256::new();
+    hasher.update(temp);
+    let checksum = &hasher.finalize()[0..4];
+
+    address.extend_from_slice(checksum);
+    bs58::encode(address).into_string()
+}
+
+fn parse_tx_from_hash(hex_str: &str) -> Result<Transaction, Box<dyn std::error::Error>> {
+    let data = hex::decode(hex_str)?;
+
+    let mut offset = 0;
+    offset += 4; // Skip version (we don't need it)
+
+    let (input_count, _) = parse_varint(&data, &mut offset);
+    let mut inputs = Vec::with_capacity(input_count);
+
+    for _ in 0..input_count {
+        let start_pos = offset;
+        let raw_txid = hex::encode(&data[offset..offset + 32]);
+        let txid = raw_txid.clone();
+        offset += 32;
+
+        let vout = u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
+        offset += 4;
+
+        let (script_len, _) = parse_varint(&data, &mut offset);
+        let raw_script = hex::encode(&data[offset..offset + script_len]);
+        let script = raw_script.clone();
+        offset += script_len;
+
+        let sequence = u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
+        offset += 4;
+
+        inputs.push(Input {
+            txid,
+            vout,
+            script,
+            sequence,
+        });
+    }
+
+    let (output_count, _) = parse_varint(&data, &mut offset);
+    let mut outputs = Vec::with_capacity(output_count);
+
+    for _ in 0..output_count {
+        let value = u64::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3], data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7]]);
+        offset += 8;
+
+        let (script_len, _) = parse_varint(&data, &mut offset);
+        let script_data = &data[offset..offset + script_len];
+        let raw_script = hex::encode(script_data);
+        let script = raw_script.clone();
+        let address = script_to_address(script_data);
+        offset += script_len;
+
+        outputs.push(Output {
+            value,
+            script,
+            address,
+        });
+    }
+
+    let lock_time = u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
+    offset += 4;
+
+    Ok(Transaction {
+        inputs,
+        outputs,
+        lock_time,
+    })
+}
+
 
 fn generate_contract(entropy: [u8; 16]) -> Result<contractInfo, String> {
     let mnemonic = Mnemonic::from_entropy(&entropy)
@@ -148,20 +315,33 @@ fn upgrade_contract_data(contract_id: usize, new_data: Option<String>) -> Result
     })
 }
 
-// #[ic_cdk::query]
-// async fn parse_transaction(tx_hex: String) -> ParseResult {
-//     match parse_tx_from_hash(tx_hex).await {
-//         Ok(tx) => ParseResult {
-//             success: true,
-//             transaction: Some(tx),
-//             error: None
-//         },
-//         Err(e) => ParseResult {
-//             success: false,
-//             transaction: None,
-//             error: Some(e)
-//         }
-//     }
+#[ic_cdk::update]
+fn store_withdrawal(token_name: String, token_type: TokenType, deploy_hash: String) -> Result<deployRecord, String> {
+    if token_name.is_empty() || deploy_hash.is_empty() {
+        return Err("Token name and withdrawal hash cannot be empty".to_string());
+    }
+    // decode hash，找到部署者
+
+    // runes确定token有效
+
+    // brc20确认token有效
+
+
+    let record = deployRecord {
+        token_name,
+        token_type,
+        deploy_hash,
+        timestamp: ic_cdk::api::time(), 
+    };
+
+    Ok(record)
+}
+
+
+// #[ic_cdk::update]
+// fn process_tx(tx_hex: &str) -> Result<Transaction, String> {
+//     parse_tx_from_hash(tx_hex)
 // }
+
 
 ic_cdk::export_candid!();
