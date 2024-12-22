@@ -316,9 +316,9 @@ fn upgrade_contract_data(contract_id: usize, new_data: Option<String>) -> Result
 }
 
 #[ic_cdk::update]
-fn store_withdrawal(token_name: String, token_type: TokenType, deploy_hash: String) -> Result<deployRecord, String> {
+fn deploy_token(token_name: String, token_type: TokenType, deploy_hash: String) -> Result<deployRecord, String> {
     if token_name.is_empty() || deploy_hash.is_empty() {
-        return Err("Token name and withdrawal hash cannot be empty".to_string());
+        return Err("Token name and deploy hash cannot be empty".to_string());
     }
     // decode hash，找到部署者
 
