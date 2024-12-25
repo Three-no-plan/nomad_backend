@@ -11,6 +11,8 @@ use sha2::{Sha256, Digest};
 use hex;
 use bs58;
 
+mod wallet;
+
 #[derive(candid::CandidType, candid::Deserialize, Clone)]
 struct contractInfo {
     id: usize,
