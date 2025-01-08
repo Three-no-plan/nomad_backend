@@ -1,9 +1,24 @@
-type Result = variant { Ok : contractInfo; Err : text };
+type ContractInfo = record {
+  token_amount : nat64;
+  derivation_path : vec blob;
+  ido_target_btc_amount : nat64;
+  contract_address : text;
+  deploy_tx_hash : text;
+  token_name : text;
+};
+type DeployBrc20Args = record {
+  token_amount : nat64;
+  ido_target_btc_amount : nat64;
+  contract_address : text;
+  deploy_tx_hash : text;
+  token_name : text;
+};
+type Result = variant { Ok : text; Err : text };
 type Result_1 = variant { Ok; Err : text };
-type contractInfo = record { id : nat64; contract_address : text };
 service : () -> {
   create_contract : () -> (Result);
-  get_contract_address : (nat64) -> (Result) query;
-  list_contract : () -> (vec nat64) query;
-  upgrade_contract_data : (nat64, opt text) -> (Result_1);
+  deploy_brc20_token : (DeployBrc20Args) -> (Result_1);
+  get_contact_info : (text) -> (opt ContractInfo) query;
+  get_contract_map_entries : () -> (vec ContractInfo) query;
+  mint_brc20_token : (text, text, text) -> (Result);
 }

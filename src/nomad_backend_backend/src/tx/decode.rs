@@ -1,14 +1,39 @@
+use std::str::FromStr;
+
+use bitcoin::ScriptBuf;
 use ic_cdk::api::management_canister::http_request::{HttpResponse, TransformArgs};
 use sha2::{Sha256, Digest};
 use bs58;
+use candid::{CandidType, Deserialize};
 
 #[derive(CandidType, Deserialize, Clone)]
 pub struct Transaction {
-    inputs: Vec<Input>,
-    outputs: Vec<Output>,
-    lock_time: u32,
+    pub inputs: Vec<Input>,
+    pub outputs: Vec<Output>,
+    pub lock_time: u32,
 }
 
+impl Transaction {
+    pub fn convert_to_std_bitcoin_tx(&self) -> bitcoin::Transaction {
+        bitcoin::Transaction { 
+            version: bitcoin::transaction::Version::TWO, 
+            lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(self.lock_time), 
+            input: self.inputs.iter().map(|input| bitcoin::transaction::TxIn {
+                previous_output: bitcoin::OutPoint {
+                    txid: bitcoin::Txid::from_str(input.txid.as_str()).unwrap(),
+                    vout: input.vout
+                },
+                script_sig: bitcoin::ScriptBuf::new(),
+                sequence: bitcoin::Sequence(input.sequence),
+                witness: bitcoin::Witness::new()
+            }).collect(), 
+            output: self.outputs.iter().map(|output| bitcoin::TxOut {
+                value: bitcoin::Amount::from_sat(output.value),
+                script_pubkey: ScriptBuf::from_hex(&output.script).unwrap()
+            }).collect()
+        }
+    }
+}
 #[derive(Debug, Clone, candid::CandidType, serde::Deserialize)]
 pub struct Input {
     txid: String,
@@ -19,9 +44,9 @@ pub struct Input {
 
 #[derive(Debug, Clone, candid::CandidType, serde::Deserialize)]
 pub struct Output {
-    value: u64,
-    script: String,
-    address: Option<String>,
+    pub value: u64,
+    pub script: String,
+    pub address: Option<String>,
 }
 
 pub fn parse_varint(data: &[u8], offset: &mut usize) -> (usize, String) {
@@ -85,8 +110,7 @@ fn hash160_to_address(hash: &[u8], version: u8) -> String {
 
 }
 
-#[ic_cdk::update]
-pub async fn parse_tx_from_hash(hex_str: String) -> Result<Transaction, String> {
+pub fn parse_tx_from_hash(hex_str: String) -> Result<Transaction, String> {
     let data = hex::decode(&hex_str).map_err(|e| e.to_string())?;
 
     let mut offset = 0;

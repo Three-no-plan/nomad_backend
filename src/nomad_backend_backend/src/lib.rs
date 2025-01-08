@@ -1,6 +1,6 @@
 use ic_cdk::api::management_canister::schnorr::{SchnorrAlgorithm, SchnorrKeyId};
 use ic_cdk::{query, update};
-use candid::{CandidType, Deserialize};
+use candid::{CandidType, Deserialize, Nat, Principal};
 use std::collections::HashMap;
 use std::cell::RefCell;
 use bip39::Mnemonic;
@@ -13,17 +13,25 @@ use hex;
 use bs58;
 
 mod wallet;
+mod tx;
 
-#[derive(candid::CandidType, candid::Deserialize, Clone)]
+#[derive(CandidType, Deserialize, Clone)]
 struct ContractInfo {
-    id: usize,
     contract_address: String,
+    derivation_path: Vec<Vec<u8>>,
+    token_name: String,
+    token_amount: u64,
+    deploy_tx_hash: String,
+    ido_target_btc_amount: u64,
 }
 
-#[derive(Clone)]
-struct ContractDetails {
+#[derive(CandidType, Deserialize, Clone)]
+struct DeployBrc20Args {
     contract_address: String,
-    derivation_path: Vec<Vec<u8>>
+    token_name: String,
+    token_amount: u64,
+    deploy_tx_hash: String,
+    ido_target_btc_amount: u64,
 }
 
 #[derive(CandidType, Deserialize, Debug)]
@@ -80,142 +88,124 @@ pub struct Output {
     address: Option<String>,
 }
 
-
-thread_local! {
-    static CONTRACT_DETAILS: RefCell<HashMap<usize, ContractDetails>> = RefCell::new(HashMap::new());
-    static CONTRACT_COUNTER: RefCell<usize> = RefCell::new(0);
-    static TOKEN_MAP: RefCell<HashMap<String, TokenInfo>> = RefCell::new(HashMap::new());
+#[derive(CandidType, Deserialize, Debug)]
+pub enum QueryBrc20Result {
+  #[serde(rename="ok")]
+  Ok(String,candid::Nat,),
+  #[serde(rename="err")]
+  Err(String),
 }
 
-fn generate_contract_id() -> usize {
-    CONTRACT_COUNTER.with(|counter| {
-        let mut current_counter = counter.borrow_mut();
-        *current_counter += 1;
-        *current_counter
-    })
+const BRC20_CANISTER_ID: &str = "wvwai-ziaaa-aaaaj-azxza-cai";
+
+thread_local! {
+    static CONTRACT_MAP: RefCell<HashMap<String, ContractInfo>> = RefCell::new(HashMap::new());
+    static TOKEN_MAP: RefCell<HashMap<String, TokenInfo>> = RefCell::new(HashMap::new());
+    static IDO_RECEIVE_MAP: RefCell<HashMap<String, Vec<(String, u64)>>> = RefCell::new(HashMap::new());
 }
 
 #[ic_cdk::init]
 fn init() {}
 
 #[ic_cdk::update]
-async fn create_contract() -> Result<ContractInfo, String> {
+async fn create_contract() -> Result<String, String> {
     let derivation_path: Vec<Vec<u8>> = vec![ic_cdk::api::time().to_be_bytes().to_vec()];
     let schnorr_public_key = wallet::get_schnorr_public_key(SchnorrKeyId {
         algorithm: SchnorrAlgorithm::Bip340secp256k1,
         name: "Test_Key".to_string()
     }, derivation_path.clone()).await;
     let contract_address = wallet::public_key_to_p2tr_script_spend_address(Network::Bitcoin, &schnorr_public_key);
-    let id = {
-        CONTRACT_COUNTER.with(|counter| {
-            let id = counter.borrow().clone();
-            counter.replace(id + 1);
-            id
-        })
-    };
-    CONTRACT_DETAILS.with(|map| {
-        map.borrow_mut().insert(id, ContractDetails {
-            contract_address: contract_address.to_string(),
-            derivation_path: derivation_path.clone()
+    let contract_address_string = contract_address.to_string();
+    CONTRACT_MAP.with(|map| {
+        map.borrow_mut().insert(contract_address_string.clone(), ContractInfo {
+            contract_address: contract_address_string.clone(),
+            derivation_path: derivation_path.clone(),
+            token_name: "".to_string(),
+            token_amount: 0,
+            deploy_tx_hash: "".to_string(),
+            ido_target_btc_amount: 0
         })
     });
-    Ok(ContractInfo {
-        id,
-        contract_address: contract_address.to_string(),
-    })
+    Ok(contract_address_string)
 }
 
 #[ic_cdk::query]
-fn get_contract_address(contract_id: usize) -> Result<ContractInfo, String> {
-    CONTRACT_DETAILS.with(|contracts| {
-        contracts.borrow()
-            .get(&contract_id)
-            .map(|details| ContractInfo {
-                id: contract_id,
-                contract_address: details.contract_address.clone(),
-            })
-            .ok_or_else(|| "contract not found".to_string())
-    })
+fn get_contact_info(contract_address: String) -> Option<ContractInfo> {
+    CONTRACT_MAP.with(|map| map.borrow().get(&contract_address).cloned())
 }
 
 #[ic_cdk::query]
-fn list_contract() -> Vec<usize> {
-    CONTRACT_DETAILS.with(|contracts| {
-        contracts.borrow()
-            .keys()
-            .cloned()
-            .collect()
-    })
+fn get_contract_map_entries() -> Vec<ContractInfo> {
+    CONTRACT_MAP.with(|map| map.borrow().values().cloned().collect())
 }
-
-// #[ic_cdk::update]
-// fn deploy_token(token_name: String, token_type: TokenType, deploy_hash: String) -> Result<deployRecord, String> {
-//     if token_name.is_empty() || deploy_hash.is_empty() {
-//         return Err("Token name and deploy hash cannot be empty".to_string());
-//     }
-//     // decode hash，找到部署者
-
-//     // runes确定token有效
-
-//     // brc20确认token有效
-
-
-//     let record = deployRecord {
-//         token_name,
-//         token_type,
-//         deploy_hash,
-//         timestamp: ic_cdk::api::time(), 
-//     };
-
-//     Ok(record)
-// }
-
-
-// #[ic_cdk::update]
-// fn process_tx(tx_hex: &str) -> Result<Transaction, String> {
-//     parse_tx_from_hash(tx_hex)
-// }
 
 #[ic_cdk::update]
-fn deploy_brc20_token(
-    contract_address: String,
-    token_name: String,
-    deploy_tx: String
-) {
-    let token_info = TokenInfo {
-        token_type: TokenType::BRC20,
-        token_name,
-        total_amount: 0u64,
-        balance_map: HashMap::new(),
-        deploy_tx
-    };
-    TOKEN_MAP.with(|map| map.borrow_mut().insert(contract_address, token_info));
+async fn deploy_brc20_token(args: DeployBrc20Args) -> Result<(), String> {
+    // 去 brc20 canister 验证
+    let tx = tx::decode::parse_tx_from_hash(args.deploy_tx_hash.clone()).unwrap();
+    let std_btc_tx = tx.convert_to_std_bitcoin_tx();
+    let tx_id = std_btc_tx.compute_ntxid().to_string();
+    let call_res = ic_cdk::call::<(String, String, String, ), (QueryBrc20Result, )>(
+        Principal::from_text(BRC20_CANISTER_ID).unwrap(), 
+        "querybrc_20", 
+        (args.contract_address.clone(), args.token_name.clone(), tx_id, )
+    ).await.unwrap().0;
+    match call_res {
+        QueryBrc20Result::Err(err) => return Err(format!("querybrc_20 error : {}", err)),
+        QueryBrc20Result::Ok(from_address, amount) => {
+            if Nat::from(args.token_amount) != amount {
+                return Err(format!("args.token_amount is {} but brc20 canister get amount is {}", args.token_amount, amount))
+            }
+        }
+    }
+
+    // 更新合约信息
+    match CONTRACT_MAP.with(|map| map.borrow().get(&args.contract_address).cloned()) {
+        None => Err(format!("Not Found The Contract !")),
+        Some(info) => {
+            CONTRACT_MAP.with(|map| map.borrow_mut().insert(args.contract_address, ContractInfo {
+                contract_address: info.contract_address,
+                derivation_path: info.derivation_path,
+                token_name: args.token_name,
+                token_amount: args.token_amount,
+                deploy_tx_hash: args.deploy_tx_hash,
+                ido_target_btc_amount: args.ido_target_btc_amount
+            }));
+            Ok(())
+        }
+    }
 }
 
 #[ic_cdk::update]
 fn mint_brc20_token(
     contract_address: String,
-    user_btc_address: String,
-    amount: u64,
-    tx: String
-) -> Result<(), String> {
-    match TOKEN_MAP.with(|map| map.borrow().get(&contract_address).cloned()) {
-        None => Err(format!("Not Found Contract !")),
-        Some(mut token_info) => {
-            let old_balance = {
-                match token_info.balance_map.get(&user_btc_address) {
-                    None => 0,
-                    Some(balance) => balance.clone()
+    user_address: String,
+    tx_hash: String,
+) -> Result<String, String> {
+    let tx = tx::decode::parse_tx_from_hash(tx_hash).unwrap();
+    let receive_amount = {
+        let mut amount = 0;
+        for output in tx.outputs {
+            if let Some(address) = output.address {
+                if address == contract_address {
+                    amount += output.value;
                 }
-            };
-            token_info.balance_map.insert(user_btc_address, old_balance + amount);
-            token_info.total_amount += amount;
-            
-            TOKEN_MAP.with(|map| map.borrow_mut().insert(contract_address, token_info));
-
-            Ok(())
+            }
         }
-    }
+        amount
+    };
+
+    let mut old_vec: Vec<(String, u64)> = {
+        match IDO_RECEIVE_MAP.with(|map| map.borrow().get(&contract_address).cloned()) {
+            None => Vec::new(),
+            Some(old_vec) => old_vec.clone(),
+        }
+    };
+    old_vec.push((user_address, receive_amount));
+    IDO_RECEIVE_MAP.with(|map| map.borrow_mut().insert(contract_address, old_vec));
+
+    // 构造 PSBT 签名
+    Ok("PSBT Sig".to_string())
 }
 
 ic_cdk::export_candid!();
