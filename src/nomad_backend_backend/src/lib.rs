@@ -11,6 +11,18 @@ use sha2::{Sha256, Digest};
 use hex;
 use bs58;
 
+
+mod psbt;
+
+pub use psbt::{
+    types::{TransactionInput, TransactionOutput, TransactionResult},
+    builder::PsbtBuilder,
+    transaction::{create_transaction_multi, combine_psbt},
+};
+
+
+
+
 #[derive(candid::CandidType, candid::Deserialize, Clone)]
 struct contractInfo {
     id: usize,
@@ -338,10 +350,20 @@ fn deploy_token(token_name: String, token_type: TokenType, deploy_hash: String) 
 }
 
 
-// #[ic_cdk::update]
 // fn process_tx(tx_hex: &str) -> Result<Transaction, String> {
 //     parse_tx_from_hash(tx_hex)
 // }
+
+#[ic_cdk::update]
+pub async fn create_transaction(
+    inputs: Vec<TransactionInput>,
+    outputs: Vec<TransactionOutput>
+) -> Result<TransactionResult> {
+    create_transaction_impl(inputs, outputs)
+        .map_err(|e| Error::TransactionError(e.to_string()))
+}
+
+
 
 
 ic_cdk::export_candid!();
