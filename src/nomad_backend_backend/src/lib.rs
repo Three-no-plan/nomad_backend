@@ -1,5 +1,6 @@
+use ic_cdk::api::management_canister::schnorr::{SchnorrAlgorithm, SchnorrKeyId};
 use ic_cdk::{query, update};
-use candid::{CandidType, Deserialize};
+use candid::{CandidType, Deserialize, Nat, Principal};
 use std::collections::HashMap;
 use std::cell::RefCell;
 use bip39::Mnemonic;
@@ -11,8 +12,9 @@ use sha2::{Sha256, Digest};
 use hex;
 use bs58;
 
-
 mod psbt;
+mod wallet;
+mod tx;
 
 pub use psbt::{
     types::{TransactionInput, TransactionOutput, TransactionResult},
@@ -21,21 +23,23 @@ pub use psbt::{
 };
 
 
-
-
-#[derive(candid::CandidType, candid::Deserialize, Clone)]
-struct contractInfo {
-    id: usize,
+#[derive(CandidType, Deserialize, Clone)]
+struct ContractInfo {
     contract_address: String,
+    derivation_path: Vec<Vec<u8>>,
+    token_name: String,
+    token_amount: u64,
+    deploy_tx_hash: String,
+    ido_target_btc_amount: u64,
 }
 
-#[derive(Clone)]
-struct contractDetails {
-    entropy: Vec<u8>,
-    mnemonic: String,
-    seed: String,
-    wif: String,
+#[derive(CandidType, Deserialize, Clone)]
+struct DeployBrc20Args {
     contract_address: String,
+    token_name: String,
+    token_amount: u64,
+    deploy_tx_hash: String,
+    ido_target_btc_amount: u64,
 }
 
 #[derive(CandidType, Deserialize, Debug)]
@@ -50,6 +54,15 @@ pub enum TxError {
 pub enum TokenType {
     BRC20,
     RUNES,
+}
+
+#[derive(CandidType, Deserialize, Debug, Clone)]
+struct TokenInfo {
+    token_type: TokenType,
+    token_name: String,
+    total_amount: u64,
+    balance_map: HashMap<String, u64>,
+    deploy_tx: String,
 }
 
 #[derive(CandidType, Clone, Debug)]
@@ -83,272 +96,125 @@ pub struct Output {
     address: Option<String>,
 }
 
+#[derive(CandidType, Deserialize, Debug)]
+pub enum QueryBrc20Result {
+  #[serde(rename="ok")]
+  Ok(String,candid::Nat,),
+  #[serde(rename="err")]
+  Err(String),
+}
+
+const BRC20_CANISTER_ID: &str = "wvwai-ziaaa-aaaaj-azxza-cai";
 
 thread_local! {
-    static contract_DETAILS: RefCell<HashMap<usize, contractDetails>> = RefCell::new(HashMap::new());
-    static contract_COUNTER: RefCell<usize> = RefCell::new(0);
-}
-
-fn get_random_entropy() -> [u8; 16] {
-    let now_millis = ic_cdk::api::time();
-    let mut seed = [0u8; 32];
-    
-    for i in 0..4 {
-        seed[i*8..(i+1)*8].copy_from_slice(&now_millis.to_be_bytes());
-    }
-    
-    let mut rng = StdRng::from_seed(seed);
-    let mut random_bytes = [0u8; 16];
-    rng.fill_bytes(&mut random_bytes);
-    random_bytes
-}
-
-fn generate_contract_id() -> usize {
-    contract_COUNTER.with(|counter| {
-        let mut current_counter = counter.borrow_mut();
-        *current_counter += 1;
-        *current_counter
-    })
-}
-
-
-
-fn parse_varint(data: &[u8], offset: &mut usize) -> (usize, String) {
-    let first_byte = data[*offset];
-    let original_offset = *offset;
-    *offset += 1;
-
-    let (value, len) = match first_byte {
-        0..=0xfc => (first_byte as usize, 1),
-        0xfd => {
-            let value = u16::from_le_bytes([data[*offset], data[*offset + 1]]) as usize;
-            *offset += 2;
-            (value, 3)
-        }
-        0xfe => {
-            let value = u32::from_le_bytes([data[*offset], data[*offset + 1], data[*offset + 2], data[*offset + 3]]) as usize;
-            *offset += 4;
-            (value, 5)
-        }
-        _ => {
-            let value = u64::from_le_bytes([data[*offset], data[*offset + 1], data[*offset + 2], data[*offset + 3], data[*offset + 4], data[*offset + 5], data[*offset + 6], data[*offset + 7]]) as usize;
-            *offset += 8;
-            (value, 9)
-        }
-    };
-
-    let raw = hex::encode(&data[original_offset..original_offset + len]);
-    (value, raw)
-}
-
-fn script_to_address(script: &[u8]) -> Option<String> {
-    if script.is_empty() {
-        return None;
-    }
-
-    if script.len() == 25 && script[0] == 0x76 && script[1] == 0xa9 && script[2] == 0x14 && script[23] == 0x88 && script[24] == 0xac {
-        return Some(hash160_to_address(&script[3..23], 0x00));
-    }
-
-    if script.len() == 23 && script[0] == 0xa9 && script[1] == 0x14 && script[22] == 0x87 {
-        return Some(hash160_to_address(&script[2..22], 0x05));
-    }
-
-    None
-}
-
-fn hash160_to_address(hash: &[u8], version: u8) -> String {
-    let mut address = vec![version];
-    address.extend_from_slice(hash);
-
-    let mut hasher = Sha256::new();
-    hasher.update(&address);
-    let temp = hasher.finalize();
-
-    let mut hasher = Sha256::new();
-    hasher.update(temp);
-    let checksum = &hasher.finalize()[0..4];
-
-    address.extend_from_slice(checksum);
-    bs58::encode(address).into_string()
-}
-
-fn parse_tx_from_hash(hex_str: &str) -> Result<Transaction, Box<dyn std::error::Error>> {
-    let data = hex::decode(hex_str)?;
-
-    let mut offset = 0;
-    offset += 4; // Skip version (we don't need it)
-
-    let (input_count, _) = parse_varint(&data, &mut offset);
-    let mut inputs = Vec::with_capacity(input_count);
-
-    for _ in 0..input_count {
-        let start_pos = offset;
-        let raw_txid = hex::encode(&data[offset..offset + 32]);
-        let txid = raw_txid.clone();
-        offset += 32;
-
-        let vout = u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
-        offset += 4;
-
-        let (script_len, _) = parse_varint(&data, &mut offset);
-        let raw_script = hex::encode(&data[offset..offset + script_len]);
-        let script = raw_script.clone();
-        offset += script_len;
-
-        let sequence = u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
-        offset += 4;
-
-        inputs.push(Input {
-            txid,
-            vout,
-            script,
-            sequence,
-        });
-    }
-
-    let (output_count, _) = parse_varint(&data, &mut offset);
-    let mut outputs = Vec::with_capacity(output_count);
-
-    for _ in 0..output_count {
-        let value = u64::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3], data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7]]);
-        offset += 8;
-
-        let (script_len, _) = parse_varint(&data, &mut offset);
-        let script_data = &data[offset..offset + script_len];
-        let raw_script = hex::encode(script_data);
-        let script = raw_script.clone();
-        let address = script_to_address(script_data);
-        offset += script_len;
-
-        outputs.push(Output {
-            value,
-            script,
-            address,
-        });
-    }
-
-    let lock_time = u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
-    offset += 4;
-
-    Ok(Transaction {
-        inputs,
-        outputs,
-        lock_time,
-    })
-}
-
-
-fn generate_contract(entropy: [u8; 16]) -> Result<contractInfo, String> {
-    let mnemonic = Mnemonic::from_entropy(&entropy)
-        .map_err(|e| format!("Mnemonic generation error: {}", e))?;
-   
-    let seed: [u8; 64] = mnemonic.to_seed("");
-    let secp = bitcoin::secp256k1::Secp256k1::new();
-   
-    let xpriv = ExtendedPrivKey::new_master(Network::Bitcoin, &seed)
-        .map_err(|e| format!("Extended private key error: {}", e))?;
-   
-    let path = "m/86'/0'/0'/0/0".parse::<DerivationPath>()
-        .map_err(|e| format!("Derivation path error: {}", e))?;
-   
-    let child_xpriv = xpriv.derive_priv(&secp, &path)
-        .map_err(|e| format!("Child private key derivation error: {}", e))?;
-   
-    let private_key = PrivateKey::new(child_xpriv.private_key, Network::Bitcoin);
-    let public_key = PublicKey::from_private_key(&secp, &private_key);
-    let x_only_public_key: XOnlyPublicKey = public_key.inner.into();
-   
-    let contract_address = Address::p2tr(&secp, x_only_public_key, None, Network::Bitcoin);
-   
-    let contract_id = generate_contract_id();
-   
-    let contract_details = contractDetails {
-        entropy: entropy.to_vec(),
-        mnemonic: mnemonic.to_string(),
-        seed: hex::encode(&seed),
-        wif: private_key.to_string(),
-        contract_address: contract_address.to_string(),
-    };
-
-    contract_DETAILS.with(|contracts| {
-        contracts.borrow_mut().insert(contract_id, contract_details);
-    });
-
-    Ok(contractInfo {
-        id: contract_id,
-        contract_address: contract_address.to_string(),
-    })
+    static CONTRACT_MAP: RefCell<HashMap<String, ContractInfo>> = RefCell::new(HashMap::new());
+    static TOKEN_MAP: RefCell<HashMap<String, TokenInfo>> = RefCell::new(HashMap::new());
+    static IDO_RECEIVE_MAP: RefCell<HashMap<String, Vec<(String, u64)>>> = RefCell::new(HashMap::new());
 }
 
 #[ic_cdk::init]
 fn init() {}
 
 #[ic_cdk::update]
-async fn create_contract() -> Result<contractInfo, String> {
-    let entropy = get_random_entropy();
-    generate_contract(entropy)
+async fn create_contract() -> Result<String, String> {
+    let derivation_path: Vec<Vec<u8>> = vec![ic_cdk::api::time().to_be_bytes().to_vec()];
+    let schnorr_public_key = wallet::get_schnorr_public_key(SchnorrKeyId {
+        algorithm: SchnorrAlgorithm::Bip340secp256k1,
+        name: "Test_Key".to_string()
+    }, derivation_path.clone()).await;
+    let contract_address = wallet::public_key_to_p2tr_script_spend_address(Network::Bitcoin, &schnorr_public_key);
+    let contract_address_string = contract_address.to_string();
+    CONTRACT_MAP.with(|map| {
+        map.borrow_mut().insert(contract_address_string.clone(), ContractInfo {
+            contract_address: contract_address_string.clone(),
+            derivation_path: derivation_path.clone(),
+            token_name: "".to_string(),
+            token_amount: 0,
+            deploy_tx_hash: "".to_string(),
+            ido_target_btc_amount: 0
+        })
+    });
+    Ok(contract_address_string)
 }
 
 #[ic_cdk::query]
-fn get_contract_address(contract_id: usize) -> Result<contractInfo, String> {
-    contract_DETAILS.with(|contracts| {
-        contracts.borrow()
-            .get(&contract_id)
-            .map(|details| contractInfo {
-                id: contract_id,
-                contract_address: details.contract_address.clone(),
-            })
-            .ok_or_else(|| "contract not found".to_string())
-    })
+fn get_contact_info(contract_address: String) -> Option<ContractInfo> {
+    CONTRACT_MAP.with(|map| map.borrow().get(&contract_address).cloned())
 }
 
 #[ic_cdk::query]
-fn list_contract() -> Vec<usize> {
-    contract_DETAILS.with(|contracts| {
-        contracts.borrow()
-            .keys()
-            .cloned()
-            .collect()
-    })
+fn get_contract_map_entries() -> Vec<ContractInfo> {
+    CONTRACT_MAP.with(|map| map.borrow().values().cloned().collect())
 }
 
 #[ic_cdk::update]
-fn upgrade_contract_data(contract_id: usize, new_data: Option<String>) -> Result<(), String> {
-    contract_DETAILS.with(|contracts| {
-        let mut contract_map = contracts.borrow_mut();
-        
-        match contract_map.get_mut(&contract_id) {
-            Some(_contract) => {
-                Ok(())
-            },
-            None => Err("contract not found".to_string())
+async fn deploy_brc20_token(args: DeployBrc20Args) -> Result<(), String> {
+    // 去 brc20 canister 验证
+    let tx = tx::decode::parse_tx_from_hash(args.deploy_tx_hash.clone()).unwrap();
+    let std_btc_tx = tx.convert_to_std_bitcoin_tx();
+    let tx_id = std_btc_tx.compute_ntxid().to_string();
+    let call_res = ic_cdk::call::<(String, String, String, ), (QueryBrc20Result, )>(
+        Principal::from_text(BRC20_CANISTER_ID).unwrap(), 
+        "querybrc_20", 
+        (args.contract_address.clone(), args.token_name.clone(), tx_id, )
+    ).await.unwrap().0;
+    match call_res {
+        QueryBrc20Result::Err(err) => return Err(format!("querybrc_20 error : {}", err)),
+        QueryBrc20Result::Ok(from_address, amount) => {
+            if Nat::from(args.token_amount) != amount {
+                return Err(format!("args.token_amount is {} but brc20 canister get amount is {}", args.token_amount, amount))
+            }
         }
-    })
+    }
+
+    // 更新合约信息
+    match CONTRACT_MAP.with(|map| map.borrow().get(&args.contract_address).cloned()) {
+        None => Err(format!("Not Found The Contract !")),
+        Some(info) => {
+            CONTRACT_MAP.with(|map| map.borrow_mut().insert(args.contract_address, ContractInfo {
+                contract_address: info.contract_address,
+                derivation_path: info.derivation_path,
+                token_name: args.token_name,
+                token_amount: args.token_amount,
+                deploy_tx_hash: args.deploy_tx_hash,
+                ido_target_btc_amount: args.ido_target_btc_amount
+            }));
+            Ok(())
+        }
+    }
 }
 
 #[ic_cdk::update]
-fn deploy_token(token_name: String, token_type: TokenType, deploy_hash: String) -> Result<deployRecord, String> {
-    if token_name.is_empty() || deploy_hash.is_empty() {
-        return Err("Token name and deploy hash cannot be empty".to_string());
-    }
-    // decode hash，找到部署者
-
-    // runes确定token有效
-
-    // brc20确认token有效
-
-
-    let record = deployRecord {
-        token_name,
-        token_type,
-        deploy_hash,
-        timestamp: ic_cdk::api::time(), 
+fn mint_brc20_token(
+    contract_address: String,
+    user_address: String,
+    tx_hash: String,
+) -> Result<String, String> {
+    let tx = tx::decode::parse_tx_from_hash(tx_hash).unwrap();
+    let receive_amount = {
+        let mut amount = 0;
+        for output in tx.outputs {
+            if let Some(address) = output.address {
+                if address == contract_address {
+                    amount += output.value;
+                }
+            }
+        }
+        amount
     };
 
-    Ok(record)
-}
+    let mut old_vec: Vec<(String, u64)> = {
+        match IDO_RECEIVE_MAP.with(|map| map.borrow().get(&contract_address).cloned()) {
+            None => Vec::new(),
+            Some(old_vec) => old_vec.clone(),
+        }
+    };
+    old_vec.push((user_address, receive_amount));
+    IDO_RECEIVE_MAP.with(|map| map.borrow_mut().insert(contract_address, old_vec));
 
+    // 构造 PSBT 签名
+    Ok("PSBT Sig".to_string())
+}
 
 // fn process_tx(tx_hex: &str) -> Result<Transaction, String> {
 //     parse_tx_from_hash(tx_hex)
@@ -362,8 +228,5 @@ pub async fn create_transaction(
     create_transaction_impl(inputs, outputs)
         .map_err(|e| Error::TransactionError(e.to_string()))
 }
-
-
-
 
 ic_cdk::export_candid!();
