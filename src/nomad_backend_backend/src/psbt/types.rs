@@ -1,7 +1,8 @@
 use bitcoin::psbt::PsbtSighashType;
 use candid::{CandidType, Deserialize};
 
-#[derive(CandidType, Deserialize, Clone)]
+// #[derive(CandidType, Deserialize, Clone)]
+#[derive(Clone)]
 pub struct TransactionInput {
     pub txid: String,
     pub vout: u32,
@@ -27,7 +28,8 @@ pub struct TransactionResult {
     pub fee: u64,
 }
 
-#[derive(CandidType, Deserialize, Clone)]
+// #[derive(CandidType, Deserialize, Clone)]
+#[derive(Clone)]
 pub struct InputUtxo {
     pub tx_id: bitcoin::Txid,
     pub vout: u32,

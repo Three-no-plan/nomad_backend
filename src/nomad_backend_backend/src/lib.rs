@@ -1,16 +1,9 @@
 use ic_cdk::api::management_canister::schnorr::{SchnorrAlgorithm, SchnorrKeyId};
-use ic_cdk::{query, update};
 use candid::{CandidType, Deserialize, Nat, Principal};
+use psbt::types::InputUtxo;
 use std::collections::HashMap;
 use std::cell::RefCell;
-use bip39::Mnemonic;
-use bitcoin::{Network, Address, PublicKey, PrivateKey, XOnlyPublicKey};
-use bitcoin::bip32::{ExtendedPrivKey, DerivationPath};
-use rand::rngs::StdRng;
-use rand::{RngCore, SeedableRng};
-use sha2::{Sha256, Digest};
-use hex;
-use bs58;
+use bitcoin::{psbt::PsbtSighashType, Network, Psbt, PublicKey};
 
 mod psbt;
 mod wallet;
@@ -21,7 +14,6 @@ pub use psbt::{
     builder::PsbtBuilder,
     transaction::{create_transaction_multi, combine_psbt},
 };
-
 
 #[derive(CandidType, Deserialize, Clone)]
 struct ContractInfo {
@@ -72,7 +64,6 @@ pub struct deployRecord {
     pub deploy_hash: String,
     pub timestamp: u64,
 }
-
 
 #[derive(CandidType, Deserialize, Debug)]
 pub struct Transaction {
@@ -185,48 +176,65 @@ async fn deploy_brc20_token(args: DeployBrc20Args) -> Result<(), String> {
 }
 
 #[ic_cdk::update]
-fn mint_brc20_token(
+async fn mint_brc20_token(
     contract_address: String,
     user_address: String,
-    tx_hash: String,
+    mint_psbt_tx_hex: String,
 ) -> Result<String, String> {
-    let tx = tx::decode::parse_tx_from_hash(tx_hash).unwrap();
-    let receive_amount = {
-        let mut amount = 0;
-        for output in tx.outputs {
-            if let Some(address) = output.address {
-                if address == contract_address {
-                    amount += output.value;
+    match CONTRACT_MAP.with(|map| map.borrow().get(&contract_address).cloned()) {
+        None => Err(format!("Not Found The Contract !")),
+        Some(info) => {
+            let user_psbt = Psbt::deserialize(&hex::decode(mint_psbt_tx_hex.clone()).unwrap()).unwrap();
+            let user_psbt_tx = user_psbt.unsigned_tx;
+            let user_psbt_tx_id = user_psbt_tx.compute_txid(); 
+        
+            let mut contrcat_psbt_builder = psbt::builder::PsbtBuilder::new(Network::Bitcoin);
+            contrcat_psbt_builder.add_input(
+                InputUtxo {
+                    tx_id: user_psbt_tx_id,
+                    vout: 0,
+                    value: user_psbt_tx.output[0].value
+                }, 
+                &contract_address, 
+                Some(&wallet::get_schnorr_public_key(SchnorrKeyId {
+                    algorithm: SchnorrAlgorithm::Bip340secp256k1,
+                    name: "Test_Key".to_string()
+                }, info.derivation_path.clone()).await),
+                Some(PsbtSighashType::from_u32(2))
+            ).unwrap();
+            contrcat_psbt_builder.add_output(&user_address, user_psbt_tx.output[0].value.to_sat()).unwrap();
+
+            let contract_psbt = contrcat_psbt_builder.build().unwrap();
+            let contract_psbt_hex = contract_psbt.serialize_hex();
+
+            let receive_amount = user_psbt_tx.output[1].value.to_sat();
+        
+            let mut old_vec: Vec<(String, u64)> = {
+                match IDO_RECEIVE_MAP.with(|map| map.borrow().get(&contract_address).cloned()) {
+                    None => Vec::new(),
+                    Some(old_vec) => old_vec.clone(),
                 }
-            }
+            };
+            old_vec.push((user_address, receive_amount));
+            IDO_RECEIVE_MAP.with(|map| map.borrow_mut().insert(contract_address, old_vec));
+        
+            psbt::transaction::combine_psbt(&mint_psbt_tx_hex, &contract_psbt_hex)
         }
-        amount
-    };
+    }
 
-    let mut old_vec: Vec<(String, u64)> = {
-        match IDO_RECEIVE_MAP.with(|map| map.borrow().get(&contract_address).cloned()) {
-            None => Vec::new(),
-            Some(old_vec) => old_vec.clone(),
-        }
-    };
-    old_vec.push((user_address, receive_amount));
-    IDO_RECEIVE_MAP.with(|map| map.borrow_mut().insert(contract_address, old_vec));
-
-    // 构造 PSBT 签名
-    Ok("PSBT Sig".to_string())
 }
 
 // fn process_tx(tx_hex: &str) -> Result<Transaction, String> {
 //     parse_tx_from_hash(tx_hex)
 // }
 
-#[ic_cdk::update]
-pub async fn create_transaction(
-    inputs: Vec<TransactionInput>,
-    outputs: Vec<TransactionOutput>
-) -> Result<TransactionResult> {
-    create_transaction_impl(inputs, outputs)
-        .map_err(|e| Error::TransactionError(e.to_string()))
-}
+// #[ic_cdk::update]
+// pub async fn create_transaction(
+//     inputs: Vec<TransactionInput>,
+//     outputs: Vec<TransactionOutput>
+// ) -> Result<TransactionResult> {
+//     create_transaction_impl(inputs, outputs)
+//         .map_err(|e| Error::TransactionError(e.to_string()))
+// }
 
 ic_cdk::export_candid!();
