@@ -96,6 +96,7 @@ pub enum QueryBrc20Result {
 }
 
 const BRC20_CANISTER_ID: &str = "wvwai-ziaaa-aaaaj-azxza-cai";
+const SCHNORR_KEY_NAME: &str = "test_key_1";
 
 thread_local! {
     static CONTRACT_MAP: RefCell<HashMap<String, ContractInfo>> = RefCell::new(HashMap::new());
@@ -111,7 +112,7 @@ async fn create_contract() -> Result<String, String> {
     let derivation_path: Vec<Vec<u8>> = vec![ic_cdk::api::time().to_be_bytes().to_vec()];
     let schnorr_public_key = wallet::get_schnorr_public_key(SchnorrKeyId {
         algorithm: SchnorrAlgorithm::Bip340secp256k1,
-        name: "Test_Key".to_string()
+        name: SCHNORR_KEY_NAME.to_string()
     }, derivation_path.clone()).await;
     let contract_address = wallet::public_key_to_p2tr_script_spend_address(Network::Bitcoin, &schnorr_public_key);
     let contract_address_string = contract_address.to_string();
@@ -136,6 +137,11 @@ fn get_contact_info(contract_address: String) -> Option<ContractInfo> {
 #[ic_cdk::query]
 fn get_contract_map_entries() -> Vec<ContractInfo> {
     CONTRACT_MAP.with(|map| map.borrow().values().cloned().collect())
+}
+
+#[ic_cdk::query]
+fn get_ido_receive_vec(ido_address: String) -> Option<Vec<(String, u64)>> {
+    IDO_RECEIVE_MAP.with(|map| map.borrow().get(&ido_address).cloned())
 }
 
 #[ic_cdk::update]
@@ -198,7 +204,7 @@ async fn mint_brc20_token(
                 &contract_address, 
                 Some(&wallet::get_schnorr_public_key(SchnorrKeyId {
                     algorithm: SchnorrAlgorithm::Bip340secp256k1,
-                    name: "Test_Key".to_string()
+                    name: SCHNORR_KEY_NAME.to_string()
                 }, info.derivation_path.clone()).await),
                 Some(PsbtSighashType::from_u32(2))
             ).unwrap();
@@ -222,6 +228,21 @@ async fn mint_brc20_token(
         }
     }
 
+}
+
+#[ic_cdk::update]
+async fn refund(contract_address: String, refund_message: Vec<u8>) -> Result<Vec<u8>, String> {
+    match CONTRACT_MAP.with(|map| map.borrow().get(&contract_address).cloned()) {
+        None => Err(format!("Not Found The Contract !")),
+        Some(info) => {
+            let sig = wallet::get_schnorr_signature(
+                SchnorrKeyId {
+                    algorithm: SchnorrAlgorithm::Bip340secp256k1,
+                    name: SCHNORR_KEY_NAME.to_string()
+                }, info.derivation_path.clone(), refund_message).await;
+            Ok(sig)
+        }
+    }
 }
 
 // fn process_tx(tx_hex: &str) -> Result<Transaction, String> {

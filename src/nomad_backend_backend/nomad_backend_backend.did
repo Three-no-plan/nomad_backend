@@ -15,10 +15,13 @@ type DeployBrc20Args = record {
 };
 type Result = variant { Ok : text; Err : text };
 type Result_1 = variant { Ok; Err : text };
+type Result_2 = variant { Ok : blob; Err : text };
 service : () -> {
   create_contract : () -> (Result);
   deploy_brc20_token : (DeployBrc20Args) -> (Result_1);
   get_contact_info : (text) -> (opt ContractInfo) query;
   get_contract_map_entries : () -> (vec ContractInfo) query;
+  get_ido_receive_vec : (text) -> (opt vec record { text; nat64 }) query;
   mint_brc20_token : (text, text, text) -> (Result);
+  refund : (text, blob) -> (Result_2);
 }
