@@ -1,16 +1,36 @@
 use bitcoin::{
-    Address, Amount, CompressedPublicKey, Network, OutPoint, PublicKey,
-    Script, Sequence, Transaction, TxIn, TxOut, Witness, psbt,
-    absolute::LockTime, transaction::Version, AddressType,
+    absolute::LockTime,
+    psbt,
+    ScriptBuf,
+    transaction::Version,
+    Address,
+    AddressType,
+    Amount,
+    CompressedPublicKey,
+    Network,
+    PublicKey,
+    Script,
+    Sequence,
+    Transaction,
+    TxIn,
+    TxOut,
+    Witness,
+    OutPoint,
+    Txid,
 };
+use bitcoin::psbt::Psbt;  
+
 use std::str::FromStr;
 use super::types::InputUtxo;
+use bitcoin::psbt::PsbtSighashType;
+use super::types::InputSignatureType;
+
 
 struct PsbtBuilderIn {
     prevout: InputUtxo,
     owner_address: Address,
     owner_pub_key: Option<PublicKey>,
-    sighash_type: Option<psbt::PsbtSighashType>,
+    sighash_type: Option<PsbtSighashType>, 
 }
 
 pub struct PsbtBuilder {
@@ -27,13 +47,15 @@ impl PsbtBuilder {
             outputs: Vec::new(),
         }
     }
-
     pub fn add_input(
         &mut self,
         utxo: InputUtxo,
         owner_address: &str,
         owner_pub_key: Option<&[u8]>,
-        sighash_type: Option<psbt::PsbtSighashType>,
+        signature_type: Option<InputSignatureType>,
+        // sighash_type: Option<PsbtSighashType>, 
+        // sighash_type: Option<TapSighashType>, // 使用 TapSighashType
+
     ) -> Result<(), String> {
         let owner_address = Address::from_str(owner_address)
             .map_err(|e| e.to_string())?
@@ -44,18 +66,34 @@ impl PsbtBuilder {
             .map(|pk| PublicKey::from_slice(pk))
             .transpose()
             .map_err(|_| "invalid public key".to_string())?;
+        let psbt_sighash_type = signature_type.map(|st| st.to_psbt_sighash_type());
+
 
         self.inputs.push(PsbtBuilderIn {
             prevout: utxo,
             owner_address,
             owner_pub_key,
-            sighash_type,
+            sighash_type: psbt_sighash_type,
         });
 
         Ok(())
     }
+    pub fn add_output(&mut self, address: &str, amount: u64, op_return: Option<Vec<u8>>) -> Result<(), String> {
+        if let Some(data) = op_return {
+            if data.len() > 80 {
+                return Err("OP_RETURN data too long (more than 80 bytes)".to_string());
+            }
+            
+            let script = ScriptBuf::from_bytes(data);
 
-    pub fn add_output(&mut self, address: &str, amount: u64) -> Result<(), String> {
+            
+            self.outputs.push(TxOut {
+                script_pubkey: script,
+                value: Amount::from_sat(0),
+            });
+            
+            return Ok(());
+        }
         let address = Address::from_str(address)
             .map_err(|e| e.to_string())?
             .require_network(self.network)
@@ -70,6 +108,7 @@ impl PsbtBuilder {
 
         Ok(())
     }
+
 
     pub fn build(&self) -> Result<psbt::Psbt, String> {
         let mut psbt_inputs = Vec::with_capacity(self.inputs.len());
@@ -100,7 +139,8 @@ impl PsbtBuilder {
                     script_pubkey: input.owner_address.script_pubkey(),
                 }),
                 redeem_script,
-                sighash_type: input.sighash_type,
+                sighash_type: input.sighash_type, 
+
                 ..Default::default()
             });
         }

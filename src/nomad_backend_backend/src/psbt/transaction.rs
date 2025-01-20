@@ -1,6 +1,28 @@
 use base64;
 use hex;
-use bitcoin::{Network, Txid, psbt::Psbt};
+
+use bitcoin::{
+    absolute::LockTime,
+    psbt,
+    ScriptBuf,
+    transaction::Version,
+    Address,
+    AddressType,
+    Amount,
+    CompressedPublicKey,
+    Network,
+    PublicKey,
+    Script,
+    Sequence,
+    Transaction,
+    TxIn,
+    TxOut,
+    Witness,
+    OutPoint,
+    Txid,
+};
+use bitcoin::psbt::Psbt;  
+
 use std::str::FromStr;
 use super::{
     types::{TransactionInput, TransactionOutput, TransactionResult, InputUtxo},
@@ -8,10 +30,18 @@ use super::{
 };
 
 pub fn create_transaction_multi(
-    network: Network,
+    network_type: &str,
     inputs: Vec<TransactionInput>,
     outputs: Vec<TransactionOutput>,
 ) -> Result<TransactionResult, String> {
+    let network = match network_type.to_lowercase().as_str() {
+        "mainnet" => Network::Bitcoin,
+        "testnet" => Network::Testnet,
+        "signet" => Network::Signet,
+        "regtest" => Network::Regtest,
+        _ => return Err(format!("Invalid network type: {}", network_type)),
+    };
+
     if inputs.is_empty() {
         return Err("No inputs provided".to_string());
     }
@@ -30,7 +60,7 @@ pub fn create_transaction_multi(
         let input_utxo = InputUtxo {
             tx_id,
             vout: input.vout,
-            value: bitcoin::Amount::from_sat(input.amount),
+            value: Amount::from_sat(input.amount),
         };
 
         total_input += input.amount;
@@ -45,17 +75,24 @@ pub fn create_transaction_multi(
             input_utxo,
             &input.address,
             pubkey_bytes.as_deref(),
-            input.sighash_type,
+            input.signature_type,
         )?;
     }
 
     for output in outputs {
-        total_output += output.amount;
-        builder.add_output(&output.address, output.amount)?;
+        if output.op_return.is_some() {
+            if output.amount != 0 {
+                return Err("OP_RETURN output must have zero amount".to_string());
+            }
+        } else {
+            total_output += output.amount;
+        }
+        
+        builder.add_output(&output.address, output.amount, output.op_return)?;
     }
 
     if total_input < total_output {
-        return Err("Input amount isnt enough".to_string());
+        return Err("Input amount isn't enough".to_string());
     }
 
     let psbt = builder.build()?;
@@ -63,7 +100,7 @@ pub fn create_transaction_multi(
     let txid = tx.txid().to_string();
 
     let fee = total_input - total_output;
-    let vsize = builder.estimate_vbytes()?;
+    let vsize: u64 = builder.estimate_vbytes()?;
 
     let serialized = builder.serialize()?;
     let psbt_base64 = base64::encode(&serialized);
@@ -79,6 +116,7 @@ pub fn create_transaction_multi(
         fee,
     })
 }
+
 
 pub fn combine_psbt(psbt1: &str, psbt2: &str) -> Result<String, String> {
     let psbt1_bytes = if psbt1.chars().all(|c| c.is_ascii_hexdigit()) {

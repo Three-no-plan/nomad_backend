@@ -245,6 +245,28 @@ async fn refund(contract_address: String, refund_message: Vec<u8>) -> Result<Vec
     }
 }
 
+
+pub fn process_external_transaction(
+    network: &str,
+    inputs: Vec<TransactionInput>,
+    outputs: Vec<TransactionOutput>
+) -> Result<TransactionResult, Box<dyn std::error::Error>> {
+    if inputs.is_empty() {
+        return Err("No transaction inputs provided".into());
+    }
+
+    if outputs.is_empty() {
+        return Err("No transaction outputs provided".into());
+    }
+
+
+    let transaction_result = create_transaction_multi(network, inputs, outputs)?;
+
+    Ok(transaction_result)
+}
+
+
+
 // fn process_tx(tx_hex: &str) -> Result<Transaction, String> {
 //     parse_tx_from_hash(tx_hex)
 // }
