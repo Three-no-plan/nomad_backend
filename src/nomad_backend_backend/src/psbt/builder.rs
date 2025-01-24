@@ -15,10 +15,7 @@ use bitcoin::{
     TxIn,
     TxOut,
     Witness,
-    OutPoint,
-    Txid,
 };
-use bitcoin::psbt::Psbt;  
 
 use std::str::FromStr;
 use super::types::InputUtxo;

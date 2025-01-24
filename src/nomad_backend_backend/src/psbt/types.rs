@@ -3,22 +3,7 @@ use bitcoin::sighash::EcdsaSighashType;
 use bitcoin::TapSighashType;
 
 use bitcoin::{
-    absolute::LockTime,
-    psbt,
-    ScriptBuf,
-    transaction::Version,
-    Address,
-    AddressType,
     Amount,
-    CompressedPublicKey,
-    Network,
-    PublicKey,
-    Script,
-    Sequence,
-    Transaction,
-    TxIn,
-    TxOut,
-    Witness,
     OutPoint,
     Txid,
 };

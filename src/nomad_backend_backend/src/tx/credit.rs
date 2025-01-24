@@ -1,6 +1,6 @@
 use bitcoin::secp256k1::{
     Secp256k1, Message, PublicKey, Error,
-    ecdsa::{RecoverableSignature, Signature, RecoveryId}
+    ecdsa::{RecoverableSignature, RecoveryId}
 };
 
 pub fn get_credit_code(message_digest: &[u8], sig: &[u8], recovery_id: i32) -> String {

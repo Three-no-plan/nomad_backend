@@ -2,23 +2,8 @@ use base64;
 use hex;
 
 use bitcoin::{
-    absolute::LockTime,
-    psbt,
-    ScriptBuf,
-    transaction::Version,
-    Address,
-    AddressType,
     Amount,
-    CompressedPublicKey,
     Network,
-    PublicKey,
-    Script,
-    Sequence,
-    Transaction,
-    TxIn,
-    TxOut,
-    Witness,
-    OutPoint,
     Txid,
 };
 use bitcoin::psbt::Psbt;  
