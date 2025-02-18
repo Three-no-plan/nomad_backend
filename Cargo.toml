@@ -1,5 +1,6 @@
 [workspace]
 members = [
-    "src/nomad_backend_backend"
+    "src/nomad_backend_backend",
+    "test"
 ]
 resolver = "2"

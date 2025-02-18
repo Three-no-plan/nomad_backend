@@ -141,7 +141,7 @@ async fn init() {
         algorithm: SchnorrAlgorithm::Bip340secp256k1,
         name: SCHNORR_KEY_NAME.to_string()
     }, derivation_path.clone()).await;
-    let contract_address = wallet::public_key_to_p2tr_script_spend_address(Network::Bitcoin, &schnorr_public_key);
+    let contract_address = wallet::public_key_to_p2tr_script_spend_address(BITCOIN_NETWORK, &schnorr_public_key);
     CONTRACT_ADDRESS.with(|address| address.borrow_mut().clone_from(&contract_address.to_string()));
 }
 
@@ -243,7 +243,7 @@ async fn mint_brc20_token(args: MintBrc20Args) -> Result<String, String> {
             let user_psbt_tx = user_psbt.unsigned_tx;
             let user_psbt_tx_id = user_psbt_tx.compute_txid(); 
         
-            let mut contrcat_psbt_builder = psbt::builder::PsbtBuilder::new(Network::Bitcoin);
+            let mut contrcat_psbt_builder = psbt::builder::PsbtBuilder::new(BITCOIN_NETWORK);
             contrcat_psbt_builder.add_input(
                 InputUtxo {
                     tx_id: user_psbt_tx_id,
