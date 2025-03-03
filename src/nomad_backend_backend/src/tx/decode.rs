@@ -44,3 +44,9 @@ pub fn parse_tx_from_hash(tx_hex: &str) -> Result<Vec<TxOutputInfo>, Box<dyn std
 
     Ok(outputs_info)
 }
+
+pub fn get_transaction_struct_from_tx_hex(tx_hex: &str) -> Transaction {
+    let tx_bytes = hex::decode(tx_hex).unwrap();
+    let transaction = deserialize(&tx_bytes).unwrap();
+    transaction
+}

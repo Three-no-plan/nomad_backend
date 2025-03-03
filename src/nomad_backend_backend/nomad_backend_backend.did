@@ -1,33 +1,34 @@
 type ContractInfo = record {
-  token_amount : nat64;
+  brc20_amount : nat64;
+  ido_target_btc_vol : nat64;
   contract_id : text;
-  ido_target_btc_amount : nat64;
-  deploy_tx_hash : text;
-  token_name : text;
-  already_ido_btc_amount : nat64;
+  mint_map : vec record { text; MintInfo };
+  already_ido_btc_vol : nat64;
+  already_ido_brc20_amount : nat64;
+  brc20_transfer_tx_hex : text;
+  brc20_name : text;
 };
 type DeployBrc20Args = record {
-  token_amount : nat64;
+  brc20_amount : nat64;
   ido_target_btc_vol : nat64;
-  deploy_tx_hash : text;
-  token_name : text;
+  brc20_transfer_tx_hex : text;
+  brc20_name : text;
 };
 type MintBrc20Args = record {
-  mint_psbt_tx_hex : text;
+  minter_transfer_btc_tx_hex : text;
   contract_id : text;
-  user_address : text;
-  token_name : text;
 };
-type RefundArgs = record { tx_hex : text; token_name : opt text };
-type Result = variant { Ok; Err : text };
-type Result_1 = variant { Ok : text; Err : text };
+type MintInfo = record {
+  brc20_amount : nat64;
+  to_address : text;
+  btc_amount : nat64;
+};
+type Result = variant { Ok : text; Err : text };
 service : {
   deploy_brc20_token : (DeployBrc20Args) -> (Result);
   get_contact_info : (text) -> (opt ContractInfo) query;
   get_contract_address : () -> (text) query;
   get_contract_map_entries : () -> (vec ContractInfo) query;
-  get_ido_receive_vec : (text) -> (opt vec record { text; nat64 }) query;
   init : () -> ();
-  mint_brc20_token : (MintBrc20Args) -> (Result_1);
-  refund : (RefundArgs) -> (Result_1);
+  mint_brc20_token : (MintBrc20Args) -> (Result);
 }

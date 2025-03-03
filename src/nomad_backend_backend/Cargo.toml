@@ -11,13 +11,13 @@ crate-type = ["cdylib"]
 [dependencies]
 bip39 = "2.1.0"
 bitcoin = "0.32.5"
-candid = "0.10.12"
+candid = "0.10.13"
 hex = "0.4.3"
 ic-cdk = "0.17.1"
 ic-cdk-timers = "0.11.0" # Feel free to remove this dependency if you don't need timers
 ic-stable-structures = "0.6.7"
 rand = "0.8.5"
-serde = "1.0.217"
+serde = "1.0.218"
 getrandom = { version = "0.2.15", features = ["custom"] }
 ic-cdk-macros = "0.17.1"
 bs58 = "0.5.1"
