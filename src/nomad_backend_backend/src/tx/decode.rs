@@ -1,19 +1,20 @@
 use bitcoin::{
     consensus::encode::deserialize,
     transaction::{Transaction, TxOut},
-    Address,
+    Address, Network
 };
 use hex;
 use std::str::FromStr;
+use candid::{CandidType, Deserialize};
 
-#[derive(Debug)]
+#[derive(CandidType, Deserialize, Clone, Debug)]
 pub struct TxOutputInfo {
     pub address: String,
     pub amount: u64,
     pub script_hex: String,
     pub op_return_data: String,
 }
-pub fn parse_tx_from_hash(tx_hex: &str) -> Result<Vec<TxOutputInfo>, Box<dyn std::error::Error>> {
+pub fn parse_tx_from_hash(tx_hex: &str, network: Network) -> Result<Vec<TxOutputInfo>, Box<dyn std::error::Error>> {
     let tx_bytes = hex::decode(tx_hex)?;
     let tx: Transaction = deserialize(&tx_bytes)?;
     let outputs_info: Vec<TxOutputInfo> = tx
@@ -21,16 +22,16 @@ pub fn parse_tx_from_hash(tx_hex: &str) -> Result<Vec<TxOutputInfo>, Box<dyn std
         .iter()
         .map(|output| {
             let address =
-                match Address::from_script(&output.script_pubkey, bitcoin::Network::Bitcoin) {
+                match Address::from_script(&output.script_pubkey, network) {
                     Ok(addr) => addr.to_string(),
-                    Err(_) => "N/A".to_string(),
+                    Err(_) => "".to_string(),
                 };
 
             let op_return_data = if output.script_pubkey.is_op_return() {
                 let data_bytes = &output.script_pubkey.as_bytes()[2..];
                 String::from_utf8_lossy(data_bytes).to_string()
             } else {
-                "N/A".to_string()
+                "".to_string()
             };
 
             TxOutputInfo {

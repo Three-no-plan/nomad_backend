@@ -5,11 +5,13 @@ mod utils;
 mod ido_did;
 mod brc20;
 
+use bitcoin::Network;
 use utils::build_agent;
 use ido_did::{DeployBrc20Args, MintBrc20Args};
 
 pub const IDO_CANISTER_STR: &str = "6lgb3-2iaaa-aaaan-qzu3a-cai";
 const IDENTITY_STR: &str = "./identity.pem";
+pub const BTC_NETWORK: Network = Network::Testnet4;
 
 #[tokio::main]
 async fn main() {

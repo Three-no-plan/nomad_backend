@@ -53,7 +53,7 @@ pub struct Transfer {
 #[derive(CandidType, Deserialize)]
 pub enum Result2 {
   #[serde(rename="ok")]
-  Ok(String,candid::Nat,),
+  Ok(Transaction),
   #[serde(rename="err")]
   Err(String),
 }
@@ -98,13 +98,8 @@ impl Service {
   pub async fn gettransferaccount(&self) -> Result<(candid::Nat,)> {
     ic_cdk::call(self.0, "gettransferaccount", ()).await
   }
-  pub async fn querybrc_20(
-    &self,
-    arg0: String,
-    arg1: String,
-    arg2: String,
-  ) -> Result<(Result2,)> {
-    ic_cdk::call(self.0, "querybrc20", (arg0,arg1,arg2,)).await
+  pub async fn querybrc_20(&self, arg0: String) -> Result<(Result2,)> {
+    ic_cdk::call(self.0, "querybrc20", (arg0,)).await
   }
   pub async fn querytransfer(&self, arg0: String) -> Result<(Result1,)> {
     ic_cdk::call(self.0, "querytransfer", (arg0,)).await
