@@ -1,4 +1,5 @@
 use bitcoin::absolute::LockTime;
+use bitcoin::secp256k1::Message;
 use bitcoin::sighash::SighashCache;
 use bitcoin::transaction::Version;
 use bitcoin::{Address, Amount, Network, ScriptBuf, Sequence, TapSighashType, TxOut};
@@ -23,7 +24,7 @@ type Memory = VirtualMemory<DefaultMemoryImpl>;
 
 mod psbt;
 mod tx;
-mod wallet;
+mod bitcoin_wallet;
 mod brc20_canister_did;
 
 pub use psbt::{
@@ -146,17 +147,11 @@ thread_local! {
 
 #[ic_cdk::update]
 async fn init() {
-    let derivation_path: Vec<Vec<u8>> = get_derivation_path();
-    let schnorr_public_key = wallet::get_schnorr_public_key(
-        SchnorrKeyId {
-            algorithm: SchnorrAlgorithm::Bip340secp256k1,
-            name: SCHNORR_KEY_NAME.to_string(),
-        },
-        derivation_path.clone(),
-    )
-    .await;
-    let contract_address =
-        wallet::public_key_to_p2tr_script_spend_address(BITCOIN_NETWORK, &schnorr_public_key);
+    let contract_address = bitcoin_wallet::p2tr_key_only::get_address(
+        IC_BITCOIN_NETWORK, 
+        SCHNORR_KEY_NAME.to_string(), 
+        get_derivation_path()
+    ).await;
     CONTRACT_ADDRESS.with(|address| {
         address
             .borrow_mut()
@@ -311,7 +306,7 @@ async fn mint_brc20_token(args: MintBrc20Args) -> Result<String, String> {
                         vout: nat_to_u32(&vout)
                     },
                     script_sig: ScriptBuf::new(),
-                    sequence: Sequence::MAX,
+                    sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
                     witness: Witness::new()
                 }],
                 output: vec![TxOut {
@@ -337,7 +332,7 @@ async fn mint_brc20_token(args: MintBrc20Args) -> Result<String, String> {
                 }]),
                 TapSighashType::All
             ).unwrap();
-
+            
             let signature = ic_cdk::api::management_canister::schnorr::sign_with_schnorr(SignWithSchnorrArgument {
                 message: <TapSighash as AsRef<[u8; 32]>>::as_ref(&sighash).to_vec(),
                 derivation_path: get_derivation_path(),
@@ -348,12 +343,12 @@ async fn mint_brc20_token(args: MintBrc20Args) -> Result<String, String> {
             }).await.unwrap().0.signature;
 
             // 设置 witness 数据（Taproot key-path spending 只需 Schnorr 签名）
-            unsigned_tx.input[0].witness.push({
-                let mut std_sig = signature;
-                std_sig.push(TapSighashType::All as u8);
-                std_sig
-            });
+            unsigned_tx.input[0].witness.push(bitcoin::taproot::Signature {
+                signature: bitcoin::secp256k1::schnorr::Signature::from_slice(&signature).unwrap(),
+                sighash_type: TapSighashType::All
+            }.to_vec());
 
+            LOGS.with(|logs| logs.borrow_mut().push(format!("tx : {:?}", unsigned_tx)));
             // 序列化交易为十六进制
             let tx_hex = hex::encode(bitcoin::consensus::serialize(&unsigned_tx));
             ERROR_RECEIVE_BTC_MAP.with(|map| map.borrow_mut().remove(&receive_address));
