@@ -11,3 +11,4 @@
 
 mod common;
 pub mod p2tr_key_only;
+pub mod schnorr_api;

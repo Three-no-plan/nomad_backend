@@ -111,8 +111,7 @@ const SCHNORR_KEY_NAME: &str = "test_key_1";
 const BITCOIN_NETWORK: Network = Network::Testnet4;
 const IC_BITCOIN_NETWORK: ic_cdk::api::management_canister::bitcoin::BitcoinNetwork =
     ic_cdk::api::management_canister::bitcoin::BitcoinNetwork::Testnet;
-// const BITCOIN_NETWORK_FEE: u64 = 2000;
-const BITCOIN_NETWORK_FEE: u64 = 100;
+const BITCOIN_NETWORK_FEE: u64 = 2000;
 
 thread_local! {
     static MEMORY_MANAGER: RefCell<MemoryManager<DefaultMemoryImpl>> =
@@ -139,8 +138,7 @@ thread_local! {
         )
     );
 
-    // static CONTRACT_ADDRESS: RefCell<String> = RefCell::new(String::new());
-    static CONTRACT_ADDRESS: RefCell<String> = RefCell::new(String::from("tb1pms7vssr50vf6cdq0kg8hasm8cm570yf07rd7ets3d90sde5jn4hqqy3967"));
+    static CONTRACT_ADDRESS: RefCell<String> = RefCell::new(String::new());
 
     static LOGS: RefCell<Vec<String>> = RefCell::new(Vec::new());
 }
@@ -333,14 +331,12 @@ async fn mint_brc20_token(args: MintBrc20Args) -> Result<String, String> {
                 TapSighashType::All
             ).unwrap();
             
-            let signature = ic_cdk::api::management_canister::schnorr::sign_with_schnorr(SignWithSchnorrArgument {
-                message: <TapSighash as AsRef<[u8; 32]>>::as_ref(&sighash).to_vec(),
-                derivation_path: get_derivation_path(),
-                key_id: SchnorrKeyId {
-                    algorithm: SchnorrAlgorithm::Bip340secp256k1,
-                    name: SCHNORR_KEY_NAME.to_string()
-                }
-            }).await.unwrap().0.signature;
+            let signature = bitcoin_wallet::schnorr_api::sign_with_schnorr(
+                SCHNORR_KEY_NAME.to_string(), 
+                get_derivation_path(), 
+                Some(vec![]), 
+                <TapSighash as AsRef<[u8; 32]>>::as_ref(&sighash).to_vec(),
+            ).await;
 
             // 设置 witness 数据（Taproot key-path spending 只需 Schnorr 签名）
             unsigned_tx.input[0].witness.push(bitcoin::taproot::Signature {
